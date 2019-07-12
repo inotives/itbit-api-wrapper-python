@@ -10,6 +10,10 @@ import base64
 import hashlib
 import hmac
 
+import urllib3
+urllib3.disable_warnings()
+
+
 
 #location of the api (change to https://beta-api.itbit.com/v1 for beta endpoint)
 api_address = 'https://api.itbit.com/v1'
@@ -22,16 +26,19 @@ class MessageSigner(object):
 
     def sign_message(self, secret, verb, url, body, nonce, timestamp):
         message = self.make_message(verb, url, body, nonce, timestamp)
-        # print message
         sha256_hash = hashlib.sha256()
+        
         nonced_message = str(nonce) + message
+        
         sha256_hash.update(nonced_message.encode('utf8'))
+        
         hash_digest = sha256_hash.digest()
+    
         hmac_digest = hmac.new(secret, url.encode('utf8') + hash_digest, hashlib.sha512).digest()
         return base64.b64encode(hmac_digest)
 
 
-class itBitApiConnection(object):
+class itBitApi(object):
 
     #clientKey, secret, and userId are provided by itBit and are specific to your user account
     def __init__(self, clientKey, secret, userId):
@@ -39,6 +46,7 @@ class itBitApiConnection(object):
         self.secret = secret.encode('utf-8')
         self.userId = userId
         self.nonce = 0
+
 
     # -------------------------------------------------------------------------------------------------------------------------
     # INTERNAL FUNCTION
@@ -49,6 +57,7 @@ class itBitApiConnection(object):
         url = api_address + url
         nonce = self._get_next_nonce()
         timestamp = self._get_timestamp()
+        http = urllib3.PoolManager()
 
         if verb in ("PUT", "POST"):
             json_body = json.dumps(body_dict)
@@ -65,7 +74,16 @@ class itBitApiConnection(object):
             'Content-Type': 'application/json'
         }
 
-        return requests.request(verb, url, data=json_body, headers=auth_headers)
+        try:
+            if verb == "GET":
+                return json.loads(http.request(verb, url, fields=json_body, headers=auth_headers, timeout=5.0).data.decode('utf-8'))
+            elif verb == "POST" or verb == 'PUT':
+                return json.loads(http.urlopen(verb, url, headers=auth_headers, body=json_body, timeout=5.0).data.decode("utf-8"))
+            else:
+                return json.loads(http.request(verb, url, fields=json_body, headers=auth_headers, timeout=5.0).data.decode('utf-8'))
+        except Exception as e:
+            print("ERROR::", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            print(str(e))
 
     #increases nonce so each request will have a unique nonce
     def _get_next_nonce(self):
